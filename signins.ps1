@@ -104,28 +104,37 @@ function GetDateRangeFromRelativePeriod {
     $startDate = $null
     $endDate = $currentDate.ToString("yyyy-MM-ddT23:59:59Z")
 
+    # Calculate the maximum allowed start date (1 month ago)
+    $maxStartDate = $currentDate.AddMonths(-1).ToString("yyyy-MM-ddT00:00:00Z")
+
     switch ($RelativePeriod.ToLower()) {
         "lastday" {
             $startDate = $currentDate.AddDays(-1).ToString("yyyy-MM-ddT00:00:00Z")
+        }
+        "last3days" {
+            $startDate = $currentDate.AddDays(-3).ToString("yyyy-MM-ddT00:00:00Z")
         }
         "lastweek" {
             $startDate = $currentDate.AddDays(-7).ToString("yyyy-MM-ddT00:00:00Z")
         }
         "lastmonth" {
-            $startDate = $currentDate.AddMonths(-1).ToString("yyyy-MM-ddT00:00:00Z")
+            $startDate = $maxStartDate
         }
         "last3months" {
-            $startDate = $currentDate.AddMonths(-3).ToString("yyyy-MM-ddT00:00:00Z")
+            Write-Output "Warning: Maximum allowed period is 1 month. Using last month instead of 3 months."
+            $startDate = $maxStartDate
         }
         "last6months" {
-            $startDate = $currentDate.AddMonths(-6).ToString("yyyy-MM-ddT00:00:00Z")
+            Write-Output "Warning: Maximum allowed period is 1 month. Using last month instead of 6 months."
+            $startDate = $maxStartDate
         }
         "lastyear" {
-            $startDate = $currentDate.AddYears(-1).ToString("yyyy-MM-ddT00:00:00Z")
+            Write-Output "Warning: Maximum allowed period is 1 month. Using last month instead of 1 year."
+            $startDate = $maxStartDate
         }
         default {
             Write-Output "Error: Invalid relative period specified. Using default of last month."
-            $startDate = $currentDate.AddMonths(-1).ToString("yyyy-MM-ddT00:00:00Z")
+            $startDate = $maxStartDate
         }
     }
 
@@ -145,6 +154,38 @@ function ValidateDateFormat {
         $date = [datetime]::ParseExact($DateString, "yyyy-MM-dd", $null)
         return $true
     } catch {
+        return $false
+    }
+}
+
+# Function to validate date range (max 1 month)
+function ValidateDateRange {
+    param (
+        [string]$StartDate,
+        [string]$EndDate
+    )
+
+    $currentDate = Get-Date
+    $maxStartDate = $currentDate.AddMonths(-1)
+
+    try {
+        $startDateTime = [datetime]::ParseExact($StartDate, "yyyy-MM-dd", $null)
+        $endDateTime = [datetime]::ParseExact($EndDate, "yyyy-MM-dd", $null)
+
+        if ($startDateTime -gt $endDateTime) {
+            Write-Output "Error: Start date must be before end date."
+            return $false
+        }
+
+        if ($startDateTime -lt $maxStartDate) {
+            Write-Output "Warning: Maximum allowed period is 1 month. Adjusting start date to $($maxStartDate.ToString('yyyy-MM-dd'))."
+            $StartDate = $maxStartDate.ToString("yyyy-MM-dd")
+            return $true
+        }
+
+        return $true
+    } catch {
+        Write-Output "Error: Invalid date format. Please use YYYY-MM-DD format."
         return $false
     }
 }
@@ -179,9 +220,13 @@ if ($RelativePeriod) {
     Write-Output "Using relative date range: $RelativePeriod"
 } elseif ($StartDate -and $EndDate) {
     if (ValidateDateFormat -DateString $StartDate -and ValidateDateFormat -DateString $EndDate) {
-        $LastMonthStart = "$StartDate" + "T00:00:00Z"
-        $Today = "$EndDate" + "T23:59:59Z"
-        Write-Output "Using custom date range: $StartDate to $EndDate"
+        if (ValidateDateRange -StartDate $StartDate -EndDate $EndDate) {
+            $LastMonthStart = "$StartDate" + "T00:00:00Z"
+            $Today = "$EndDate" + "T23:59:59Z"
+            Write-Output "Using custom date range: $StartDate to $EndDate"
+        } else {
+            Write-Output "Error: Invalid date range. Using default of last month."
+        }
     } else {
         Write-Output "Error: Invalid date format. Please use YYYY-MM-DD format. Using default of last month."
     }
@@ -190,9 +235,9 @@ if ($RelativePeriod) {
     $dateOption = Read-Host "Choose date range option (1=Relative, 2=Custom, 3=Default Last Month)"
     switch ($dateOption) {
         "1" {
-            $relativeOptions = @("lastday", "lastweek", "lastmonth", "last3months", "last6months", "lastyear")
-            $relativeChoice = Read-Host "Choose relative period: 1=Last Day, 2=Last Week, 3=Last Month, 4=Last 3 Months, 5=Last 6 Months, 6=Last Year"
-            if ($relativeChoice -match '^[1-6]$') {
+            $relativeOptions = @("lastday", "last3days", "lastweek", "lastmonth")
+            $relativeChoice = Read-Host "Choose relative period: 1=Last Day, 2=Last 3 Days, 3=Last Week, 4=Last Month"
+            if ($relativeChoice -match '^[1-4]$') {
                 $RelativePeriod = $relativeOptions[$relativeChoice - 1]
                 $dateRange = GetDateRangeFromRelativePeriod -RelativePeriod $RelativePeriod
                 $LastMonthStart = $dateRange.StartDate
@@ -206,9 +251,13 @@ if ($RelativePeriod) {
             $StartDate = Read-Host "Enter start date (YYYY-MM-DD)"
             $EndDate = Read-Host "Enter end date (YYYY-MM-DD)"
             if (ValidateDateFormat -DateString $StartDate -and ValidateDateFormat -DateString $EndDate) {
-                $LastMonthStart = "$StartDate" + "T00:00:00Z"
-                $Today = "$EndDate" + "T23:59:59Z"
-                Write-Output "Using custom date range: $StartDate to $EndDate"
+                if (ValidateDateRange -StartDate $StartDate -EndDate $EndDate) {
+                    $LastMonthStart = "$StartDate" + "T00:00:00Z"
+                    $Today = "$EndDate" + "T23:59:59Z"
+                    Write-Output "Using custom date range: $StartDate to $EndDate"
+                } else {
+                    Write-Output "Error: Invalid date range. Using default of last month."
+                }
             } else {
                 Write-Output "Error: Invalid date format. Using default of last month."
             }
@@ -260,8 +309,20 @@ foreach ($UserUPN in $UserUPNArray) {
     $LastPasswordFilter = "startswith(userPrincipalName,'$UserUPN')&`$select=lastPasswordChangeDateTime"
     $LastPasswordresponse = Invoke-MgGraphRequest -Method GET -Uri "https://graph.microsoft.com/beta/users?`$filter=$LastPasswordFilter" -Headers $headers
     $lastPasswordChangeDate = $($LastPasswordresponse.value).lastPasswordChangeDateTime
+
+    # Create a user info file to store additional information
+    $UserInfoPath = "$ExportPath\UserInfo_$SafeUPN.json"
+
     if ($lastPasswordChangeDate) {
         Write-Output "The last password change date for user $UserUPN is $lastPasswordChangeDate"
+
+        # Save user info including last password change date
+        $userInfo = @{
+            "UPN" = $UserUPN
+            "LastPasswordChangeDate" = $lastPasswordChangeDate
+        } | ConvertTo-Json -Depth 5
+
+        $userInfo | Out-File -FilePath $UserInfoPath -Encoding utf8
 
         # Query for Interactive Sign-Ins
         Write-Output "Processing for Interactive Sign-Ins"

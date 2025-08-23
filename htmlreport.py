@@ -25,6 +25,29 @@ def generate_user_data(user_folder: Path):
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
     html_parts = [f"<h1>Sign-in Security Report for {username}</h1><p>Generated at {timestamp}</p>"]
 
+    # Read user info file
+    user_info_path = Path("Exports") / f"UserInfo_{username.replace('@', '_')}.json"
+    last_password_change = "Not available"
+
+    if user_info_path.exists():
+        try:
+            with open(user_info_path, 'r') as f:
+                user_info = json.load(f)
+                last_password_change = user_info.get("LastPasswordChangeDate", "Not available")
+        except Exception as e:
+            print(f"Error reading user info for {username}: {e}")
+
+    # Add user information section
+    user_info_html = f"""
+    <h2>User Information</h2>
+    <table class='summary-table'>
+        <tr><th>Field</th><th>Value</th></tr>
+        <tr><td>User Principal Name</td><td>{username}</td></tr>
+        <tr><td>Last Password Change</td><td>{last_password_change}</td></tr>
+    </table>
+    """
+    html_parts.append(user_info_html)
+
     # --- Summary Metrics ---
     summary_html = "<h2>Summary Metrics</h2>"
 
@@ -154,6 +177,8 @@ def main():
         .tab button:hover { background-color: #ddd; }
         .tab button.active { background-color: #ccc; }
         .tabcontent { display: none; padding: 10px 0; }
+        .user-info-table { margin-bottom: 20px; }
+        .user-info-table th { width: 200px; }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
