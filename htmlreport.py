@@ -107,7 +107,8 @@ def generate_user_data(user_folder: Path):
             line_charts_config[event]["data"].append(count)
             if count > 0:
                 event_has_data = True
-                tables_html[event].append((mode, generate_toggle_table(df, f"{event}_{mode}_{username}")))
+                # Generate table with mode in the button name
+                tables_html[event].append((mode, generate_toggle_table(df, f"{event}_{mode}_{username}", mode)))
                 ip_col = "ip" if "ip" in df.columns else "IP_clean" if "IP_clean" in df.columns else None
                 if ip_col:
                     ip_counts = df[ip_col].value_counts().to_dict()
@@ -147,13 +148,13 @@ def generate_user_data(user_folder: Path):
 
             styled_df = suspicious_df.style.apply(highlight_flagged, axis=1)
             html_parts.append("<h3>Suspicious IPs</h3>")
-            html_parts.append(generate_toggle_table(styled_df, f"suspicious_ips_{username}"))
+            # For Suspicious IPs, don't include mode in the button name
+            html_parts.append(generate_toggle_table(styled_df, f"suspicious_ips_{username}", None))
 
     # Add event type tables
     for event, table_list in tables_html.items():
         html_parts.append(f"<h3>{event.replace('_',' ').title()}</h3>")
         for mode, table_html in table_list:
-            html_parts.append(f"<h4>Mode: {mode.title()}</h4>")
             html_parts.append(table_html)
 
     # --- Charts Section ---
@@ -165,14 +166,20 @@ def generate_user_data(user_folder: Path):
 
     return username, "".join(html_parts), line_charts_config, ip_charts_config, creation_date
 
-def generate_toggle_table(df: pd.DataFrame, table_id: str):
+def generate_toggle_table(df: pd.DataFrame, table_id: str, mode: str = None):
     # Check if the DataFrame is a Styler object
     if hasattr(pd, 'Styler') and isinstance(df, pd.Styler):
         html = df.to_html()
     else:
         html = df.to_html(index=False, classes='table', border=0, table_id=table_id)
+
+    # Create button text based on whether mode is provided
+    button_text = "Toggle Table"
+    if mode is not None:
+        button_text = f"Toggle Table ({mode.title()})"
+
     return f"""
-    <button class="toggle-button" onclick="toggleTable('{table_id}')">Toggle Table</button>
+    <button class="toggle-button" onclick="toggleTable('{table_id}')">{button_text}</button>
     <div id="{table_id}_container" class="table-container">{html}</div>
     """
 

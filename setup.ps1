@@ -3,7 +3,7 @@ python -m venv venv
 .\venv\Scripts\Activate.ps1
 
 Write-Host "[+] Installing dependencies..."
-pip install --upgrade pip
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 
 Write-Host "[+] Loading .env file..."

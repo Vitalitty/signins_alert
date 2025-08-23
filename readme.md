@@ -116,6 +116,7 @@ This will:
 - Detect security anomalies
 - Generate detailed reports in the `reports` directory
 - Create an interactive HTML report combining all findings
+- Include user information such as Last Password Change date in the reports
 
 ## Date Range Options
 
@@ -123,11 +124,9 @@ The sign-in collection script supports multiple ways to specify date ranges:
 
 ### Relative Periods
 - `lastday`: Sign-ins from the last 24 hours
+- `last3days`: Sign-ins from the last 3 days
 - `lastweek`: Sign-ins from the last 7 days
 - `lastmonth`: Sign-ins from the last 30 days (default)
-- `last3months`: Sign-ins from the last 90 days
-- `last6months`: Sign-ins from the last 180 days
-- `lastyear`: Sign-ins from the last 365 days
 
 ### Custom Dates
 Specify exact start and end dates in YYYY-MM-DD format:
@@ -177,74 +176,4 @@ Specify exact start and end dates in YYYY-MM-DD format:
 - Visual charts showing event distribution
 - Highlighting of suspicious IPs in reports
 - Summary metrics for quick assessment
-
-## Configuration
-
-### Analysis Parameters
-You can modify these parameters in `analyse.py`:
-- `MIN_TIME_SECONDS`: Minimum time difference for speed calculation
-- `THRESHOLD_KMH`: Speed threshold for impossible travel detection
-- `BRUTE_WINDOW`: Time window for brute force detection
-- `BRUTE_MIN_ATTEMPTS`: Minimum attempts for brute force detection
-- `MFA_WINDOW`: Time window for MFA spam detection
-- `MFA_MIN_ATTEMPTS`: Minimum attempts for MFA spam detection
-- `DEFAULT_WORKERS`: Number of parallel workers for analysis
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Missing .env file**:
-   - Error: "X .env file not found"
-   - Solution: Create the .env file with all required keys
-
-2. **Incomplete .env file**:
-   - Error: "X Unable to retrieve ACCOUNT_ID or LICENSE_KEY from .env"
-   - Solution: Ensure all required keys are present in the .env file
-
-3. **GeoLite2 database not found**:
-   - Error: "GeoIP DB not available"
-   - Solution: Run setup.ps1 to download the database
-
-4. **Missing Python dependencies**:
-   - Error: ModuleNotFoundError for pandas, geoip2, etc.
-   - Solution: Run setup.ps1 to install dependencies
-
-5. **Microsoft Graph authentication issues**:
-   - Error: "Failed to authenticate with Microsoft Graph"
-   - Solution: Verify your Microsoft Graph permissions and credentials
-
-6. **Invalid date format**:
-   - Error: "Error: Invalid date format"
-   - Solution: Use YYYY-MM-DD format for custom dates
-
-## Example Workflow
-
-1. **Setup**:
-   ```powershell
-   .\setup.ps1
-   ```
-
-2. **Collect data with relative period**:
-   ```powershell
-   .\signins.ps1 -UserUPNs "user1@example.com,user2@example.com" -RelativePeriod "lastmonth"
-   ```
-
-3. **Analyze data**:
-   ```powershell
-   python analyse.py -u user1@example.com
-   python analyse.py -u user2@example.com
-   ```
-
-4. **View reports**:
-   Open `reports/all_users_signins_report.html` in a web browser
-
-## Notes
-
-- Ensure you have the necessary permissions to access the Microsoft Graph API
-- The script uses the beta endpoint of Microsoft Graph API
-- Analysis features require Python and the dependencies listed in requirements.txt
-- The GeoLite2 database will be automatically downloaded if not present
-- API keys are required for VirusTotal and AbuseIPDB services
-- For large datasets, consider increasing the number of workers for faster analysis
-- The date range selection provides flexibility to analyze different time periods
+- User information section including Last Password Change date

@@ -120,18 +120,6 @@ function GetDateRangeFromRelativePeriod {
         "lastmonth" {
             $startDate = $maxStartDate
         }
-        "last3months" {
-            Write-Output "Warning: Maximum allowed period is 1 month. Using last month instead of 3 months."
-            $startDate = $maxStartDate
-        }
-        "last6months" {
-            Write-Output "Warning: Maximum allowed period is 1 month. Using last month instead of 6 months."
-            $startDate = $maxStartDate
-        }
-        "lastyear" {
-            Write-Output "Warning: Maximum allowed period is 1 month. Using last month instead of 1 year."
-            $startDate = $maxStartDate
-        }
         default {
             Write-Output "Error: Invalid relative period specified. Using default of last month."
             $startDate = $maxStartDate
