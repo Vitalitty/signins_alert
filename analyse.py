@@ -13,6 +13,7 @@ import sys
 from dotenv import load_dotenv
 import os
 import requests
+from datetime import datetime, timezone
 
 # ----- config -----
 MIN_TIME_SECONDS = 1  # avoid divisions by very small delta
@@ -358,6 +359,9 @@ def run_analysis(interactive_path: Path, non_interactive_path: Path, username: s
     summary = {}
     user_report_dir = REPORT_DIR / username
     user_report_dir.mkdir(parents=True, exist_ok=True)
+
+    # Add timestamp to summary
+    summary["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     # --- Combined mode ---
     if mode in ("combined", "both"):

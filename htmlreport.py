@@ -1,6 +1,5 @@
 import pandas as pd
 from pathlib import Path
-from datetime import datetime, timezone
 import json
 
 REPORT_DIR = Path("reports")
@@ -22,7 +21,19 @@ def read_csv_safe(path: Path):
 
 def generate_user_data(user_folder: Path):
     username = user_folder.name
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    # Get the timestamp from the summary.json file
+    summary_path = user_folder / "summary.json"
+    timestamp = "Not available"
+
+    if summary_path.exists():
+        try:
+            with open(summary_path, 'r') as f:
+                summary_data = json.load(f)
+                # Get the timestamp from the summary file
+                timestamp = summary_data.get("timestamp", "Not available")
+        except Exception as e:
+            print(f"Error reading summary for {username}: {e}")
+
     html_parts = [f"<h1>Sign-in Security Report for {username}</h1><p>Generated at {timestamp}</p>"]
 
     # Read user info file
@@ -52,7 +63,6 @@ def generate_user_data(user_folder: Path):
     summary_html = "<h2>Summary Metrics</h2>"
 
     # Read summary.json for IP analysis data
-    summary_path = user_folder / "summary.json"
     ip_analysis = {}
     if summary_path.exists():
         with open(summary_path, 'r') as f:
