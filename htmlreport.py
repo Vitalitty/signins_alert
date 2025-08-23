@@ -1,6 +1,7 @@
 import pandas as pd
 from pathlib import Path
 import json
+from datetime import datetime
 
 REPORT_DIR = Path("reports")
 OUTPUT_HTML = REPORT_DIR / "all_users_signins_report.html"
@@ -24,6 +25,7 @@ def generate_user_data(user_folder: Path):
     # Get the timestamp from the summary.json file
     summary_path = user_folder / "summary.json"
     timestamp = "Not available"
+    creation_date = None  # This will be used for sorting
 
     if summary_path.exists():
         try:
@@ -31,8 +33,16 @@ def generate_user_data(user_folder: Path):
                 summary_data = json.load(f)
                 # Get the timestamp from the summary file
                 timestamp = summary_data.get("timestamp", "Not available")
+                # Parse the timestamp to a datetime object for sorting
+                try:
+                    creation_date = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S %Z")
+                except (ValueError, TypeError):
+                    # Fallback if parsing fails - use current time as a last resort
+                    creation_date = datetime.now()
         except Exception as e:
             print(f"Error reading summary for {username}: {e}")
+            # If there's an error reading the file, use current time
+            creation_date = datetime.now()
 
     html_parts = [f"<h1>Sign-in Security Report for {username}</h1><p>Generated at {timestamp}</p>"]
 
@@ -153,7 +163,7 @@ def generate_user_data(user_folder: Path):
         html_parts.append(f'<h4>Total Events</h4><div class="chart-container"><canvas id="line_{username}_{event}"></canvas></div>')
         html_parts.append(f'<h4>Events by IP</h4><div class="chart-container"><canvas id="ip_{username}_{event}"></canvas></div>')
 
-    return username, "".join(html_parts), line_charts_config, ip_charts_config
+    return username, "".join(html_parts), line_charts_config, ip_charts_config, creation_date
 
 def generate_toggle_table(df: pd.DataFrame, table_id: str):
     # Check if the DataFrame is a Styler object
@@ -236,20 +246,40 @@ def main():
     </script>
     """
 
+    # Collect all user data first
+    user_data = []
+    for user_folder in REPORT_DIR.iterdir():
+        if user_folder.is_dir():
+            username, html_content, line_charts_config, ip_charts_config, creation_date = generate_user_data(user_folder)
+            user_data.append({
+                'username': username,
+                'html_content': html_content,
+                'line_charts_config': line_charts_config,
+                'ip_charts_config': ip_charts_config,
+                'creation_date': creation_date
+            })
+
+    # Sort users by creation date (oldest first)
+    user_data.sort(key=lambda x: x['creation_date'])
+
+    # Generate tabs and content in chronological order
     tabs_html = '<div class="tab">'
     tabcontents_html = ''
     first = True
     user_charts_json = ""
 
-    for user_folder in sorted(REPORT_DIR.iterdir()):
-        if user_folder.is_dir():
-            username, html_content, line_charts_config, ip_charts_config = generate_user_data(user_folder)
-            active_class = "active" if first else ""
-            display_style = "block" if first else "none"
-            tabs_html += f'<button class="tablinks {active_class}" onclick="openTab(event, \'{username}\')">{username}</button>'
-            tabcontents_html += f'<div id="{username}" class="tabcontent" style="display:{display_style}">{html_content}</div>'
-            user_charts_json += f"userChartsData['{username}']={{line_charts:{json.dumps(line_charts_config)},ip_charts:{json.dumps(ip_charts_config)}}};\n"
-            first = False
+    for user in user_data:
+        username = user['username']
+        html_content = user['html_content']
+        line_charts_config = user['line_charts_config']
+        ip_charts_config = user['ip_charts_config']
+
+        active_class = "active" if first else ""
+        display_style = "block" if first else "none"
+        tabs_html += f'<button class="tablinks {active_class}" onclick="openTab(event, \'{username}\')">{username}</button>'
+        tabcontents_html += f'<div id="{username}" class="tabcontent" style="display:{display_style}">{html_content}</div>'
+        user_charts_json += f"userChartsData['{username}']={{line_charts:{json.dumps(line_charts_config)},ip_charts:{json.dumps(ip_charts_config)}}};\n"
+        first = False
 
     tabs_html += '</div>'
 
