@@ -1,0 +1,5 @@
+.env
+Exports/*
+GeoDB/*
+venv/
+reports/*

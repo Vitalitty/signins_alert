@@ -1,0 +1,5 @@
+pandas
+geopy
+geoip2
+dotenv
+jinja2
