@@ -1,0 +1,27 @@
+{
+    "directories": {
+        "reports_dir": "reports",
+        "exports_dir": "exports",
+        "geoip_db": "geodb/GeoLite2-City.mmdb"
+    },
+    "detection_thresholds": {
+        "min_time_seconds": 1,
+        "threshold_kmh": 900,
+        "brute_window_minutes": 1,
+        "brute_min_attempts": 3,
+        "mfa_window_minutes": 1,
+        "mfa_min_attempts": 3
+    },
+    "performance": {
+        "default_workers": 8,
+        "max_retries": 3,
+        "max_concurrent_jobs": 5
+    },
+    "logging": {
+        "level": "Info",
+        "colors_enabled": true
+    },
+    "html_report": {
+        "output_filename": "all_users_signins_report.html"
+    }
+}

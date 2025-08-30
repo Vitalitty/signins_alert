@@ -2,12 +2,141 @@ import pandas as pd
 from pathlib import Path
 import json
 from datetime import datetime
+import argparse
+import logging
+import sys
 
-REPORT_DIR = Path("reports")
-OUTPUT_HTML = REPORT_DIR / "all_users_signins_report.html"
+# ----- Load Configuration -----
+CONFIG_FILE = Path("signins_config.json")
 
-EVENT_TYPES = ["impossible_travel", "brute_alerts", "mfa_alerts"]
+
+def load_config():
+    """Load configuration from signins_config.json file."""
+    # Define default configuration structure
+    default_config = {
+        "directories": {
+            "reports_dir": "reports",
+            "exports_dir": "exports"
+        },
+        "html_report": {
+            "output_filename": "all_users_signins_report.html"
+        },
+        "logging": {
+            "level": "Info",
+            "colors_enabled": True
+        }
+    }
+
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, 'r') as f:
+                config = json.load(f)
+
+            # Validate and merge with defaults to ensure all required fields exist
+            def merge_config(default, loaded):
+                """Recursively merge loaded config with defaults"""
+                result = default.copy()
+                if isinstance(loaded, dict):
+                    for key, value in loaded.items():
+                        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                            result[key] = merge_config(result[key], value)
+                        else:
+                            result[key] = value
+                return result
+
+            config = merge_config(default_config, config)
+
+            # Validate specific config values
+            valid_log_levels = ["Error", "Warning", "Info", "Success", "Debug"]
+            if config["logging"]["level"] not in valid_log_levels:
+                print(f"Warning: Invalid logging level '{config['logging']['level']}'. Using 'Info'.")
+                config["logging"]["level"] = "Info"
+
+            if not isinstance(config["logging"]["colors_enabled"], bool):
+                print("Warning: Invalid colors_enabled value. Using True.")
+                config["logging"]["colors_enabled"] = True
+
+            return config
+
+        except Exception as e:
+            print(f"Warning: Error loading config file {CONFIG_FILE}: {e}")
+            print("Using hardcoded defaults.")
+    else:
+        print(f"Warning: Config file {CONFIG_FILE} not found. Using hardcoded defaults.")
+
+    # Return complete default configuration if config file is missing or invalid
+    return default_config
+
+
+# Load configuration
+config = load_config()
+
+# Default directories (can be overridden by command line arguments or config file)
+DEFAULT_REPORT_DIR = Path(config["directories"]["reports_dir"])
+DEFAULT_EXPORTS_DIR = Path(config["directories"]["exports_dir"])
+
+# Core program constants - these define what the script can process
+EVENT_TYPES = ["impossible_travel", "brute_alerts", "mfa_alerts", "suspicious_devices"]
 MODES = ["combined", "interactive", "noninteractive"]
+OUTPUT_FILENAME = config["html_report"]["output_filename"]
+
+
+# ----- Logging -----
+def write_log(message, level="Info"):
+    """Custom logging function with timestamp and colors matching PowerShell format."""
+    # Get logging configuration
+    log_config = config.get("logging", {})
+    min_log_level = log_config.get("level", "Info")
+    colors_enabled = log_config.get("colors_enabled", True)
+
+    # Define log level hierarchy for filtering
+    level_hierarchy = {"Error": 0, "Warning": 1, "Info": 2, "Success": 2, "Debug": 3}
+
+    # Check if this message should be logged based on configured level
+    if level_hierarchy.get(level, 2) > level_hierarchy.get(min_log_level, 2):
+        return  # Skip logging if level is below configured minimum
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_message = f"[{timestamp}] [{level}] {message}"
+
+    # Apply colors only if enabled in config
+    if colors_enabled:
+        # Color codes for Windows/Unix terminals
+        if sys.platform == "win32":
+            # Windows ANSI color codes (works with modern Windows 10/11)
+            color_map = {
+                "Info": "\033[37m",       # White
+                "Warning": "\033[33m",    # Yellow
+                "Error": "\033[31m",      # Red
+                "Success": "\033[32m",    # Green
+                "Debug": "\033[36m"       # Cyan
+            }
+            reset_color = "\033[0m"
+        else:
+            # Unix/Linux color codes
+            color_map = {
+                "Info": "\033[0;37m",     # White
+                "Warning": "\033[0;33m",  # Yellow
+                "Error": "\033[0;31m",    # Red
+                "Success": "\033[0;32m",   # Green
+                "Debug": "\033[0;36m"     # Cyan
+            }
+            reset_color = "\033[0m"
+
+        color = color_map.get(level, color_map["Info"])
+        print(f"{color}{log_message}{reset_color}")
+    else:
+        print(log_message)
+
+
+# Keep standard logging for external libraries, but set to WARNING to reduce noise
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s %(message)s")
+
+# ----- Log Configuration Summary -----
+write_log(f"Using configuration: reports_dir='{DEFAULT_REPORT_DIR}', exports_dir='{DEFAULT_EXPORTS_DIR}', "
+          + f"output_filename='{OUTPUT_FILENAME}', log_level='{config['logging']['level']}', "
+          + f"colors_enabled={config['logging']['colors_enabled']}", "Info")
+
 
 def read_csv_safe(path: Path):
     if not path.exists():
@@ -20,12 +149,12 @@ def read_csv_safe(path: Path):
     except pd.errors.EmptyDataError:
         return pd.DataFrame()
 
-def generate_user_data(user_folder: Path):
+
+def generate_user_data(user_folder: Path, exports_dir: Path):
     username = user_folder.name
-    # Get the timestamp from the summary.json file
     summary_path = user_folder / "summary.json"
     timestamp = "Not available"
-    creation_date = None  # This will be used for sorting
+    creation_date = None
 
     if summary_path.exists():
         try:
@@ -40,34 +169,127 @@ def generate_user_data(user_folder: Path):
                     # Fallback if parsing fails - use current time as a last resort
                     creation_date = datetime.now()
         except Exception as e:
-            print(f"Error reading summary for {username}: {e}")
+            write_log(f"Error reading summary for {username}: {e}", "Error")
             # If there's an error reading the file, use current time
             creation_date = datetime.now()
 
-    html_parts = [f"<h1>Sign-in Security Report for {username}</h1><p>Generated at {timestamp}</p>"]
-
-    # Read user info file
-    user_info_path = Path("Exports") / f"UserInfo_{username.replace('@', '_')}.json"
+    # First try the user-specific folder in exports for user information
+    user_specific_exports = exports_dir / username / f"UserInfo_{username}.json"
     last_password_change = "Not available"
+    real_email = username  # Fallback to sanitized username if real email not found
 
-    if user_info_path.exists():
+    if user_specific_exports.exists():
         try:
-            with open(user_info_path, 'r') as f:
+            with open(user_specific_exports, 'r', encoding='utf-8') as f:
                 user_info = json.load(f)
-                last_password_change = user_info.get("LastPasswordChangeDate", "Not available")
+                raw_last_password_change = user_info.get("LastPasswordChangeDate", None)
+                UserUPN = user_info.get("UPN", "Not available")
+                real_email = UserUPN if UserUPN != "Not available" else username  # Use real email if available
+                City = user_info.get("City", "Not available")
+                State = user_info.get("State", "Not available")
+                Country = user_info.get("Country", "Not available")
+                Department = user_info.get("Department", "Not available")
+                OfficeLocation = user_info.get("OfficeLocation", "Not available")
+                if raw_last_password_change is not None:
+                    try:
+                        # Convert from milliseconds to seconds, then format
+                        dt = datetime.fromtimestamp(int(raw_last_password_change) / 1000)
+                        last_password_change = dt.strftime("%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        last_password_change = str(raw_last_password_change)
+                else:
+                    last_password_change = "Not available"
         except Exception as e:
-            print(f"Error reading user info for {username}: {e}")
+            write_log(f"Error reading user info for {username}: {e}", "Error")
+            UserUPN = "Not available"
+
+    html_parts = [f"<h1>Sign-in Security Report for {real_email}</h1><p>Generated at {timestamp}</p>"]
 
     # Add user information section
     user_info_html = f"""
     <h2>User Information</h2>
     <table class='summary-table'>
         <tr><th>Field</th><th>Value</th></tr>
-        <tr><td>User Principal Name</td><td>{username}</td></tr>
+        <tr><td>User Principal Name</td><td>{UserUPN}</td></tr>
         <tr><td>Last Password Change</td><td>{last_password_change}</td></tr>
+        <tr><td>City</td><td>{City}</td></tr>
+        <tr><td>State</td><td>{State}</td></tr>
+        <tr><td>Country</td><td>{Country}</td></tr>
+        <tr><td>Department</td><td>{Department}</td></tr>
+        <tr><td>Office Location</td><td>{OfficeLocation}</td></tr>
     </table>
     """
     html_parts.append(user_info_html)
+
+    devices_specific_exports = exports_dir / username / f"DevicesInfo_{username}.json"
+
+    if devices_specific_exports.exists():
+        try:
+            with open(devices_specific_exports, 'r', encoding='utf-8') as f:
+                device_data = json.load(f)
+                devices = device_data.get("Devices", [])
+
+                if devices:
+                    # Create devices section header
+                    devices_info_html = "<h2>Device Information</h2>"
+
+                    # Create a single table with all devices
+                    devices_info_html += """
+                    <table class='summary-table'>
+                    <tr>
+                        <th>Device ID</th>
+                        <th>Registration Date</th>
+                        <th>Display Name</th>
+                        <th>Device Ownership</th>
+                        <th>Manufacturer</th>
+                        <th>Model</th>
+                        <th>Operating System</th>
+                        <th>Trust Type</th>
+                        <th>Enrollment Type</th>
+                    </tr>
+                    """
+
+                    for device in devices:
+                        deviceId = device.get("DeviceId", "Not available")
+                        registrationDateTimeunixMs = device.get("RegistrationDateTime", "Not available")
+                        displayName = device.get("DisplayName", "Not available")
+                        deviceOwnership = device.get("DeviceOwnership", "Not available")
+                        manufacturer = device.get("Manufacturer", "Not available")
+                        model = device.get("Model", "Not available")
+                        operatingSystem = device.get("OperatingSystem", "Not available")
+                        trustType = device.get("TrustType", "Not available")
+                        enrollmentType = device.get("EnrollmentType", "Not available")
+
+                        if registrationDateTimeunixMs != "Not available" and registrationDateTimeunixMs is not None:
+                            try:
+                                # Convert from milliseconds to seconds, then format
+                                dt = datetime.fromtimestamp(int(registrationDateTimeunixMs) / 1000)
+                                registration_date_time = dt.strftime("%Y-%m-%d %H:%M:%S")
+                            except Exception:
+                                registration_date_time = str(registrationDateTimeunixMs)
+                        else:
+                            registration_date_time = "Not available"
+
+                        # Add device row to table
+                        devices_info_html += f"""
+                        <tr>
+                            <td>{deviceId}</td>
+                            <td>{registration_date_time}</td>
+                            <td>{displayName}</td>
+                            <td>{deviceOwnership}</td>
+                            <td>{manufacturer}</td>
+                            <td>{model}</td>
+                            <td>{operatingSystem}</td>
+                            <td>{trustType}</td>
+                            <td>{enrollmentType}</td>
+                        </tr>
+                        """
+
+                    devices_info_html += "</table>"
+                    html_parts.append(devices_info_html)
+
+        except Exception as e:
+            write_log(f"Error reading device info for {username}: {e}", "Error")
 
     # --- Summary Metrics ---
     summary_html = "<h2>Summary Metrics</h2>"
@@ -80,12 +302,13 @@ def generate_user_data(user_folder: Path):
             ip_analysis = summary_data.get("ip_analysis", {})
 
     # Add IP analysis to summary table
-    summary_html += "<table class='summary-table'>"
-    summary_html += "<tr><th>IP Analysis</th><th>Number</th></tr>"
-    summary_html += f"<tr><td>Suspicious IPs</td><td>{ip_analysis.get('suspicious_ips', 0)}</td></tr>"
-    summary_html += f"<tr><td>IPs Flagged by VirusTotal</td><td>{ip_analysis.get('ips_VT_flagged', 0)}</td></tr>"
-    summary_html += f"<tr><td>IPs Flagged by AbuseIPDB</td><td>{ip_analysis.get('ips_abuseipdb_flagged', 0)}</td></tr>"
-    summary_html += "</table>"
+    if ip_analysis:
+        summary_html += "<table class='summary-table'>"
+        summary_html += "<tr><th>IP Analysis</th><th>Number</th></tr>"
+        summary_html += f"<tr><td>Suspicious IPs</td><td>{ip_analysis.get('suspicious_ips', 0)}</td></tr>"
+        summary_html += f"<tr><td>IPs Flagged by VirusTotal</td><td>{ip_analysis.get('ips_VT_flagged', 0)}</td></tr>"
+        summary_html += f"<tr><td>IPs Flagged by AbuseIPDB</td><td>{ip_analysis.get('ips_abuseipdb_flagged', 0)}</td></tr>"
+        summary_html += "</table>"
 
     # Add event type summary
     summary_html += "<table class='summary-table'><tr><th>Event Type</th><th>Mode</th><th>Total Events</th></tr>"
@@ -109,8 +332,10 @@ def generate_user_data(user_folder: Path):
                 event_has_data = True
                 # Generate table with mode in the button name
                 tables_html[event].append((mode, generate_toggle_table(df, f"{event}_{mode}_{username}", mode)))
-                ip_col = "ip" if "ip" in df.columns else "IP_clean" if "IP_clean" in df.columns else None
-                if ip_col:
+
+                ip_col = "ip" if "ip" in df.columns else None
+
+                if ip_col and ip_col in df.columns:
                     ip_counts = df[ip_col].value_counts().to_dict()
                     ip_charts_config[event]["datasets"][mode] = ip_counts
 
@@ -132,19 +357,23 @@ def generate_user_data(user_folder: Path):
     if suspicious_ips_path.exists():
         suspicious_df = read_csv_safe(suspicious_ips_path)
         if not suspicious_df.empty:
-            # Highlight flagged IPs
+            # Highlight flagged IPs with different colors based on threat level
             def highlight_flagged(row):
-                is_flagged = False
+                vt_malicious = int(row.get("virustotal_malicious", 0))
+                vt_suspicious = int(row.get("virustotal_suspicious", 0))
+                abuseipdb_score = int(row.get("abuseipdb_score", 0))
 
-                # Check VirusTotal
-                if int(row.get("virustotal_malicious", 0)) > 0 or int(row.get("virustotal_suspicious", 0)) > 0:
-                    is_flagged = True
+                # Red highlighting (high threat)
+                if vt_malicious >= 3 or abuseipdb_score >= 33:
+                    return ['background-color: #ffcccc'] * len(row)
 
-                # Check AbuseIPDB
-                if int(row.get("abuseipdb_score", 0)) > 0:
-                    is_flagged = True
+                # Yellow highlighting (medium threat)
+                elif vt_suspicious > 0 or (0 < vt_malicious < 3) or (0 < abuseipdb_score < 33):
+                    return ['background-color: #fff2cc'] * len(row)
 
-                return ['background-color: #ffcccc'] * len(row) if is_flagged else [''] * len(row)
+                # No highlighting (no threat indicators)
+                else:
+                    return [''] * len(row)
 
             styled_df = suspicious_df.style.apply(highlight_flagged, axis=1)
             html_parts.append("<h3>Suspicious IPs</h3>")
@@ -164,7 +393,8 @@ def generate_user_data(user_folder: Path):
         html_parts.append(f'<h4>Total Events</h4><div class="chart-container"><canvas id="line_{username}_{event}"></canvas></div>')
         html_parts.append(f'<h4>Events by IP</h4><div class="chart-container"><canvas id="ip_{username}_{event}"></canvas></div>')
 
-    return username, "".join(html_parts), line_charts_config, ip_charts_config, creation_date
+    return username, real_email, "".join(html_parts), line_charts_config, ip_charts_config, creation_date
+
 
 def generate_toggle_table(df: pd.DataFrame, table_id: str, mode: str = None):
     # Check if the DataFrame is a Styler object
@@ -183,7 +413,31 @@ def generate_toggle_table(df: pd.DataFrame, table_id: str, mode: str = None):
     <div id="{table_id}_container" class="table-container">{html}</div>
     """
 
+
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description="Generate HTML report from sign-in analysis results",
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    parser.add_argument("--reports-dir", default=str(DEFAULT_REPORT_DIR),
+                        help=f"Reports directory path (default: {DEFAULT_REPORT_DIR})")
+    parser.add_argument("--exports-dir", default=str(DEFAULT_EXPORTS_DIR),
+                        help=f"Exports directory path (default: {DEFAULT_EXPORTS_DIR})")
+
+    args = parser.parse_args()
+
+    # Convert arguments to Path objects
+    report_dir = Path(args.reports_dir)
+    exports_dir = Path(args.exports_dir)
+    output_html = report_dir / OUTPUT_FILENAME
+
+    # Validate directories exist
+    if not report_dir.exists():
+        write_log(f"Error: Reports directory not found: {report_dir}", "Error")
+        write_log("Please run analyse.py first to generate reports, or specify correct --reports-dir", "Error")
+        sys.exit(1)
+
     css_js = """
     <style>
         body { font-family: Arial, sans-serif; margin: 20px; }
@@ -253,13 +507,14 @@ def main():
     </script>
     """
 
-    # Collect all user data first
+    # Collect all user data
     user_data = []
-    for user_folder in REPORT_DIR.iterdir():
+    for user_folder in report_dir.iterdir():
         if user_folder.is_dir():
-            username, html_content, line_charts_config, ip_charts_config, creation_date = generate_user_data(user_folder)
+            username, real_email, html_content, line_charts_config, ip_charts_config, creation_date = generate_user_data(user_folder, exports_dir)
             user_data.append({
                 'username': username,
+                'real_email': real_email,
                 'html_content': html_content,
                 'line_charts_config': line_charts_config,
                 'ip_charts_config': ip_charts_config,
@@ -277,13 +532,14 @@ def main():
 
     for user in user_data:
         username = user['username']
+        real_email = user['real_email']
         html_content = user['html_content']
         line_charts_config = user['line_charts_config']
         ip_charts_config = user['ip_charts_config']
 
         active_class = "active" if first else ""
         display_style = "block" if first else "none"
-        tabs_html += f'<button class="tablinks {active_class}" onclick="openTab(event, \'{username}\')">{username}</button>'
+        tabs_html += f'<button class="tablinks {active_class}" onclick="openTab(event, \'{username}\')">{real_email}</button>'
         tabcontents_html += f'<div id="{username}" class="tabcontent" style="display:{display_style}">{html_content}</div>'
         user_charts_json += f"userChartsData['{username}']={{line_charts:{json.dumps(line_charts_config)},ip_charts:{json.dumps(ip_charts_config)}}};\n"
         first = False
@@ -306,8 +562,14 @@ def main():
     </html>
     """
 
-    OUTPUT_HTML.write_text(html_content_full)
-    print(f"Combined HTML report generated at {OUTPUT_HTML}")
+    output_html.write_text(html_content_full)
+    write_log(f"Combined HTML report generated at {output_html}", "Success")
+
+    # Also print directory information for user reference
+    write_log("Report generated from:", "Info")
+    write_log(f"  Reports directory: {report_dir}", "Info")
+    write_log(f"  Exports directory: {exports_dir}", "Info")
+
 
 if __name__ == "__main__":
     main()
