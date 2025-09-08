@@ -491,6 +491,9 @@ Write-Log "Configuration loaded successfully" -Level Info
 if ([string]::IsNullOrEmpty($ExportPath)) {
     $ExportPath = $script:config.directories.exports_dir
 }
+# Always resolve ExportPath relative to the script's directory
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$ExportPath = Join-Path $ScriptDir $ExportPath
 if ($MaxRetries -eq 0) {
     $MaxRetries = $script:config.performance.max_retries
 }
