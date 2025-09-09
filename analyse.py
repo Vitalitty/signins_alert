@@ -10,6 +10,7 @@ import geoip2.database
 import ipaddress
 from geoip2.errors import AddressNotFoundError
 import requests
+import urllib3
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import subprocess
@@ -19,6 +20,9 @@ import os
 from datetime import datetime, timezone
 
 print("Initialization complete!")
+
+# Disable InsecureRequestWarning
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ----- Load Configuration -----
 CONFIG_FILE = Path("signins_config.json")
@@ -428,7 +432,7 @@ def query_virustotal(ip):
     url = f"https://www.virustotal.com/api/v3/ip_addresses/{ip}"
     headers = {"x-apikey": VT_API_KEY}
     try:
-        resp = requests.get(url, headers=headers, timeout=10)
+        resp = requests.get(url, headers=headers, timeout=10, verify=False)
         if resp.status_code == 200:
             data = resp.json().get("data", {}).get("attributes", {})
             stats = data.get("last_analysis_stats", {})
@@ -448,7 +452,7 @@ def query_abuseipdb(ip):
     headers = {"Accept": "application/json", "Key": ABUSEIPDB_API_KEY}
     params = {"ipAddress": ip, "maxAgeInDays": 90}
     try:
-        resp = requests.get(url, headers=headers, params=params, timeout=10)
+        resp = requests.get(url, headers=headers, params=params, timeout=10, verify=False)
         if resp.status_code == 200:
             data = resp.json().get("data", {})
             return (f"score:{data.get('abuseConfidenceScore',0)};"
@@ -715,29 +719,34 @@ def generate_suspicious_ips_csv(username):
     user_report_dir = REPORT_DIR / username
     alert_files = list(user_report_dir.glob("*.csv"))
 
-    # Collect unique IPs and reasons
+    # Collect unique IPs and reasons from alert CSVs
     ip_reasons = {}
     for f in alert_files:
-        df = pd.read_csv(f)
-        reason = None
-        if "speed_kmh" in df.columns:
+        fname = f.name.lower()
+        if fname.startswith("impossible_travel_"):
             reason = "impossible-travel"
             ip_col = "ip"
-        elif "type" in df.columns:
+        elif fname.startswith("brute_alerts_"):
+            reason = "brute-force"
             ip_col = "ip"
-            reason = None
+        elif fname.startswith("mfa_alerts_"):
+            reason = "mfa-spam"
+            ip_col = "ip"
+        elif fname.startswith("suspicious_devices_"):
+            reason = "suspicious-device"
+            ip_col = "ip"
         else:
             continue
 
+        df = pd.read_csv(f)
         for _, row in df.iterrows():
-            ip = row[ip_col]
+            ip = row.get(ip_col, None)
             if pd.isna(ip) or str(ip).strip() == "":
                 continue
             ip = str(ip).strip()
-            alert_type = row.get("type", reason)
             if ip not in ip_reasons:
                 ip_reasons[ip] = set()
-            ip_reasons[ip].add(alert_type)
+            ip_reasons[ip].add(reason)
 
     records = []
 
