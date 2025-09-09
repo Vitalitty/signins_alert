@@ -317,6 +317,9 @@ def generate_user_data(user_folder: Path, exports_dir: Path):
     line_charts_config = {}
     ip_charts_config = {}
 
+    # Use refactored aggregation
+    event_mode_counts, ip_labels = aggregate_event_mode_counts(user_folder, username)
+
     for event in EVENT_TYPES:
         event_has_data = False
         tables_html[event] = []
@@ -330,22 +333,14 @@ def generate_user_data(user_folder: Path, exports_dir: Path):
             line_charts_config[event]["data"].append(count)
             if count > 0:
                 event_has_data = True
-                # Generate table with mode in the button name
                 tables_html[event].append((mode, generate_toggle_table(df, f"{event}_{mode}_{username}", mode)))
-
-                ip_col = "ip" if "ip" in df.columns else None
-
-                if ip_col and ip_col in df.columns:
-                    ip_counts = df[ip_col].value_counts().to_dict()
-                    ip_charts_config[event]["datasets"][mode] = ip_counts
-
+                # Use refactored aggregation for ip_charts_config
+                ip_charts_config[event]["datasets"][mode] = event_mode_counts[event][mode]
             summary_html += f"<tr><td>{event.replace('_',' ').title()}</td><td>{mode.title()}</td><td>{count}</td></tr>"
-
         if not event_has_data:
             line_charts_config.pop(event)
             ip_charts_config.pop(event)
             tables_html.pop(event)
-
     summary_html += "</table>"
     html_parts.append(summary_html)
 
@@ -388,12 +383,44 @@ def generate_user_data(user_folder: Path, exports_dir: Path):
 
     # --- Charts Section ---
     html_parts.append("<h2>Charts</h2>")
+    # Use refactored aggregation for event type chart
+    event_colors = {
+        "impossible_travel": "rgba(54,162,235,0.7)",
+        "brute_alerts": "rgba(75,192,192,0.7)",
+        "mfa_alerts": "rgba(255,206,86,0.7)",
+        "suspicious_devices": "rgba(255,99,132,0.7)"
+    }
+    datasets = []
+    for event in EVENT_TYPES:
+        data = [sum(event_mode_counts[event][mode].get(ip, 0) for mode in MODES) for ip in ip_labels]
+        datasets.append({
+            "label": event.replace('_', ' ').title(),
+            "data": data,
+            "backgroundColor": event_colors.get(event, "rgba(200,200,200,0.7)")
+        })
+    if ip_labels:
+        html_parts.append(f'<h3>Total Events per IP (by Event Type)</h3><div class="chart-container"><canvas id="total_events_per_ip_{username}"></canvas></div>')
     for event in line_charts_config:
         html_parts.append(f"<h3>{event.replace('_',' ').title()}</h3>")
         html_parts.append(f'<h4>Total Events</h4><div class="chart-container"><canvas id="line_{username}_{event}"></canvas></div>')
         html_parts.append(f'<h4>Events by IP</h4><div class="chart-container"><canvas id="ip_{username}_{event}"></canvas></div>')
+    return username, real_email, "".join(html_parts), line_charts_config, ip_charts_config, creation_date, ip_labels, datasets
 
-    return username, real_email, "".join(html_parts), line_charts_config, ip_charts_config, creation_date
+
+def aggregate_event_mode_counts(user_folder, username):
+    """Aggregate event counts by event type, mode, and IP for a user."""
+    event_mode_counts = {event: {mode: {} for mode in MODES} for event in EVENT_TYPES}
+    all_ip_set = set()
+    for event in EVENT_TYPES:
+        for mode in MODES:
+            file_path = user_folder / f"{event}_{username}_{mode}.csv"
+            df = read_csv_safe(file_path)
+            if not df.empty and "ip" in df.columns:
+                for ip, count in df["ip"].value_counts().items():
+                    ip_str = str(ip)
+                    event_mode_counts[event][mode][ip_str] = count
+                    all_ip_set.add(ip_str)
+    return event_mode_counts, sorted(all_ip_set)
 
 
 def generate_toggle_table(df: pd.DataFrame, table_id: str, mode: str = None):
@@ -409,8 +436,8 @@ def generate_toggle_table(df: pd.DataFrame, table_id: str, mode: str = None):
         button_text = f"Toggle Table ({mode.title()})"
 
     return f"""
-    <button class="toggle-button" onclick="toggleTable('{table_id}')">{button_text}</button>
-    <div id="{table_id}_container" class="table-container">{html}</div>
+    <button class=\"toggle-button\" onclick=\"toggleTable('{table_id}')\">{button_text}</button>
+    <div id=\"{table_id}_container\" class=\"table-container\" style=\"display:none;\">{html}</div>
     """
 
 
@@ -464,6 +491,8 @@ def main():
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
         const userChartsData = {};
+        // Store chart instances by canvas id
+        const chartInstances = {};
         function toggleTable(id){
             const c = document.getElementById(id+"_container");
             c.style.display = c.style.display==="none"?"block":"none";
@@ -482,8 +511,13 @@ def main():
             if(!data) return;
             Object.keys(data.line_charts).forEach(event=>{
                 const cfg=data.line_charts[event];
-                const ctx=document.getElementById('line_'+username+'_'+event).getContext('2d');
-                new Chart(ctx,{type:'line',data:{labels:cfg.labels,datasets:[{label:'Total Events',data:cfg.data,fill:false,borderColor:'rgba(75,192,192,1)'}]},options:{responsive:true}});
+                const canvasId = 'line_'+username+'_'+event;
+                const ctx=document.getElementById(canvasId).getContext('2d');
+                // Destroy previous chart if exists
+                if(chartInstances[canvasId]){
+                    chartInstances[canvasId].destroy();
+                }
+                chartInstances[canvasId] = new Chart(ctx,{type:'line',data:{labels:cfg.labels,datasets:[{label:'Total Events',data:cfg.data,fill:false,borderColor:'rgba(75,192,192,1)'}]},options:{responsive:true}});
             });
             Object.keys(data.ip_charts).forEach(event=>{
                 const all_ips = new Set();
@@ -494,9 +528,27 @@ def main():
                     const values=labels.map(ip=>data.ip_charts[event].datasets[mode][ip]||0);
                     datasets.push({label:mode,data:values,backgroundColor:modeColor(mode)});
                 });
-                const ctx=document.getElementById('ip_'+username+'_'+event).getContext('2d');
-                new Chart(ctx,{type:'bar',data:{labels:labels,datasets:datasets},options:{responsive:true,scales:{x:{stacked:false},y:{stacked:false}}}});
+                const canvasId = 'ip_'+username+'_'+event;
+                const ctx=document.getElementById(canvasId).getContext('2d');
+                // Destroy previous chart if exists
+                if(chartInstances[canvasId]){
+                    chartInstances[canvasId].destroy();
+                }
+                chartInstances[canvasId] = new Chart(ctx,{type:'bar',data:{labels:labels,datasets:datasets},options:{responsive:true,scales:{x:{stacked:false},y:{stacked:false}}}});
             });
+            // Destroy previous chart if exists
+            const totalIpCanvasId = 'total_events_per_ip_'+username;
+            const totalIpCanvas = document.getElementById(totalIpCanvasId);
+            if(totalIpCanvas){
+                if(chartInstances[totalIpCanvasId]){
+                    chartInstances[totalIpCanvasId].destroy();
+                }
+                chartInstances[totalIpCanvasId] = new Chart(totalIpCanvas.getContext('2d'),{
+                    type:'bar',
+                    data:{labels:userChartsData[username]["total_events_per_ip"].labels,datasets:userChartsData[username]["total_events_per_ip"].datasets},
+                    options:{responsive:true,scales:{x:{stacked:true},y:{stacked:true}}}
+                });
+            }
         }
         function modeColor(mode){
             if(mode==='combined') return 'rgba(54,162,235,0.6)';
@@ -511,14 +563,16 @@ def main():
     user_data = []
     for user_folder in report_dir.iterdir():
         if user_folder.is_dir():
-            username, real_email, html_content, line_charts_config, ip_charts_config, creation_date = generate_user_data(user_folder, exports_dir)
+            username, real_email, html_content, line_charts_config, ip_charts_config, creation_date, ip_labels, datasets = generate_user_data(user_folder, exports_dir)
             user_data.append({
                 'username': username,
                 'real_email': real_email,
                 'html_content': html_content,
                 'line_charts_config': line_charts_config,
                 'ip_charts_config': ip_charts_config,
-                'creation_date': creation_date
+                'creation_date': creation_date,
+                'ip_labels': ip_labels,
+                'datasets': datasets
             })
 
     # Sort users by creation date (oldest first)
@@ -536,12 +590,14 @@ def main():
         html_content = user['html_content']
         line_charts_config = user['line_charts_config']
         ip_charts_config = user['ip_charts_config']
+        ip_labels = user.get('ip_labels', [])
+        datasets = user.get('datasets', [])
 
         active_class = "active" if first else ""
         display_style = "block" if first else "none"
         tabs_html += f'<button class="tablinks {active_class}" onclick="openTab(event, \'{username}\')">{real_email}</button>'
         tabcontents_html += f'<div id="{username}" class="tabcontent" style="display:{display_style}">{html_content}</div>'
-        user_charts_json += f"userChartsData['{username}']={{line_charts:{json.dumps(line_charts_config)},ip_charts:{json.dumps(ip_charts_config)}}};\n"
+        user_charts_json += f"userChartsData['{username}']={{line_charts:{json.dumps(line_charts_config)},ip_charts:{json.dumps(ip_charts_config)},total_events_per_ip:{{labels:{json.dumps(ip_labels)},datasets:{json.dumps(datasets)}}}}};\n"
         first = False
 
     tabs_html += '</div>'

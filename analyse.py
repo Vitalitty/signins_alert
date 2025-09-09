@@ -212,25 +212,23 @@ def select_users_interactive(available_users):
         print("No users with complete export data found in the exports directory.")
         return []
 
-    print("\n" + "=" * 60)
-    print("AVAILABLE USERS WITH EXPORT DATA")
-    print("=" * 60)
-
-    # Display users in columns for better readability
-    for i, user in enumerate(available_users, 1):
-        print(f"{i:2d}. {user}")
-
-    print("\n" + "-" * 60)
-    print("SELECTION OPTIONS:")
-    print("  Single user:     Enter number (e.g., 1)")
-    print("  Multiple users:  Enter numbers separated by commas (e.g., 1,3,5)")
-    print("  Range of users:  Enter range (e.g., 1-5)")
-    print("  All users:       Enter 'all' or '*'")
-    print("  Search users:    Enter 's' to search by name")
-    print("  Cancel:          Enter 'q' or 'quit'")
-    print("-" * 60)
-
     while True:
+        print("\n" + "=" * 60)
+        print("AVAILABLE USERS WITH EXPORT DATA")
+        print("=" * 60)
+        # Display users in columns for better readability
+        for i, user in enumerate(available_users, 1):
+            print(f"{i:2d}. {user}")
+        print("\n" + "-" * 60)
+        print("SELECTION OPTIONS:")
+        print("  Single user:     Enter number (e.g., 1)")
+        print("  Multiple users:  Enter numbers separated by commas (e.g., 1,3,5)")
+        print("  Range of users:  Enter range (e.g., 1-5)")
+        print("  All users:       Enter 'all' or '*'")
+        print("  Search users:    Enter 's' to search by name")
+        print("  Cancel:          Enter 'q' or 'quit'")
+        print("-" * 60)
+
         selection = input("\nYour choice: ").strip()
 
         if selection.lower() in ['q', 'quit']:
@@ -245,6 +243,8 @@ def select_users_interactive(available_users):
                 confirm = input("Process these users? (y/n): ").strip().lower()
                 if confirm in ['y', 'yes']:
                     return matching_users
+                else:
+                    continue  # Show menu again
             else:
                 print("No users found matching your search.")
             continue
@@ -254,11 +254,11 @@ def select_users_interactive(available_users):
             confirm = input("Proceed with all users? (y/n): ").strip().lower()
             if confirm in ['y', 'yes']:
                 return available_users
-            continue
+            else:
+                continue  # Show menu again
 
         try:
             selected_indices = []
-
             # Handle ranges (e.g., 1-5)
             if '-' in selection:
                 parts = selection.split('-')
@@ -275,7 +275,6 @@ def select_users_interactive(available_users):
                             selected_indices.append(idx - 1)
                         else:
                             raise ValueError(f"Invalid selection: {idx}")
-
             if selected_indices:
                 # Remove duplicates and sort
                 selected_indices = sorted(list(set(selected_indices)))
@@ -286,12 +285,12 @@ def select_users_interactive(available_users):
                 confirm = input("\nProceed with these users? (y/n): ").strip().lower()
                 if confirm in ['y', 'yes']:
                     return selected_users
+                else:
+                    continue  # Show menu again
             else:
                 print("No valid selection made.")
-
         except ValueError as e:
             print(f"Invalid input: {e}")
-
         print("Please try again.")
 
 
